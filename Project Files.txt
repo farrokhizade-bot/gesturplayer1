@@ -1,0 +1,1256 @@
+============================================================
+1 - settings.gradle | ROOT
+============================================================
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "GesturePlayer"
+include ':app'
+
+============================================================
+2 - build.gradle | ROOT
+============================================================
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+}
+
+============================================================
+3 - gradle.properties | ROOT
+============================================================
+org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+============================================================
+4 - .gitignore | ROOT
+============================================================
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build
+
+============================================================
+5 - app/build.gradle
+============================================================
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.example.gestureplayer'
+    compileSdk 34
+    buildToolsVersion "34.0.0"
+
+    defaultConfig {
+        applicationId "com.example.gestureplayer"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+    def camerax_version = "1.3.1"
+    implementation "androidx.camera:camera-core:${camerax_version}"
+    implementation "androidx.camera:camera-camera2:${camerax_version}"
+    implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+    implementation "androidx.camera:camera-view:${camerax_version}"
+
+    implementation 'com.google.mediapipe:tasks-vision:0.10.14'
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.16.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+}
+
+============================================================
+6 - app/proguard-rules.pro
+============================================================
+# MediaPipe Rules
+-keep class com.google.mediapipe.** { *; }
+-keep class com.google.mediapipe.tasks.** { *; }
+
+# Glide Rules
+-keep public class * implements com.bumptech.glide.module.GlideModule
+-keep class com.bumptech.glide.** { *; }
+
+============================================================
+7 - AndroidManifest.xml | app/src/main
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GesturePlayer">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".LibraryActivity"
+            android:exported="false" />
+    </application>
+</manifest>
+
+============================================================
+8 - MainActivity.kt | app/src/main/java/com/example/gestureplayer
+============================================================
+package com.example.gestureplayer
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.media.AudioManager
+import android.net.Uri
+import android.os.Bundle
+import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import com.bumptech.glide.Glide
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import java.util.concurrent.TimeUnit
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var previewView: PreviewView
+    private lateinit var albumArt: ImageView
+    private lateinit var songTitle: TextView
+    private lateinit var artistName: TextView
+    private lateinit var currentTime: TextView
+    private lateinit var totalTime: TextView
+    private lateinit var seekBar: SeekBar
+    private lateinit var playPauseBtn: ImageButton
+    private lateinit var previousBtn: ImageButton
+    private lateinit var nextBtn: ImageButton
+    private lateinit var cameraToggleBtn: ImageButton
+    private lateinit var libraryBtn: ImageButton
+    private lateinit var backgroundBtn: ImageButton
+    private lateinit var mainLayout: RelativeLayout
+
+    private lateinit var audioManager: AudioManager
+    private var musicPlayer: MusicPlayer? = null
+    private var gestureController: GestureController? = null
+    private var isCameraActive = false
+
+    private val backgroundColors = intArrayOf(
+        ContextCompat.getColor(this, R.color.background),
+        ContextCompat.getColor(this, R.color.secondary),
+        ContextCompat.getColor(this, R.color.secondary_dark)
+    )
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.all { it }) {
+            setupMusicPlayer()
+        } else {
+            Toast.makeText(this, "دسترسی داده نشد", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val backgroundPicker = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            mainLayout.setBackground(
+                BitmapFactory.decodeStream(contentResolver.openInputStream(it))
+            )
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        initializeViews()
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        requestPermissions()
+    }
+
+    private fun initializeViews() {
+        previewView = findViewById(R.id.previewView)
+        albumArt = findViewById(R.id.albumArt)
+        songTitle = findViewById(R.id.songTitle)
+        artistName = findViewById(R.id.artistName)
+        currentTime = findViewById(R.id.currentTime)
+        totalTime = findViewById(R.id.totalTime)
+        seekBar = findViewById(R.id.seekBar)
+        playPauseBtn = findViewById(R.id.playPauseBtn)
+        previousBtn = findViewById(R.id.previousBtn)
+        nextBtn = findViewById(R.id.nextBtn)
+        cameraToggleBtn = findViewById(R.id.cameraToggleBtn)
+        libraryBtn = findViewById(R.id.libraryBtn)
+        backgroundBtn = findViewById(R.id.backgroundBtn)
+        mainLayout = findViewById(R.id.mainLayout)
+
+        playPauseBtn.setOnClickListener {
+            musicPlayer?.togglePlayPause()
+            updatePlayPauseIcon()
+        }
+        previousBtn.setOnClickListener { musicPlayer?.playPrevious() }
+        nextBtn.setOnClickListener { musicPlayer?.playNext() }
+
+        cameraToggleBtn.setOnClickListener { toggleCamera() }
+        libraryBtn.setOnClickListener { startActivity(Intent(this, LibraryActivity::class.java)) }
+        backgroundBtn.setOnClickListener { showBackgroundChooser() }
+
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) musicPlayer?.seekTo(progress.toLong() * 1000)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+    }
+
+    private fun requestPermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.READ_MEDIA_AUDIO,
+            Manifest.permission.CAMERA,
+            Manifest.permission.POST_NOTIFICATIONS
+        )
+        val needed = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isNotEmpty()) {
+            permissionLauncher.launch(needed.toTypedArray())
+        } else {
+            setupMusicPlayer()
+            toggleCamera()
+        }
+    }
+
+    private fun setupMusicPlayer() {
+        musicPlayer = MusicPlayer(this)
+        musicPlayer?.let { player ->
+            if (player.getAllSongs().isNotEmpty()) {
+                updateUI(player.getCurrentSong())
+                player.playIndex(0)
+
+                Thread {
+                    while (!isFinishing) {
+                        runOnUiThread {
+                            val song = player.getCurrentSong()
+                            val position = player.getCurrentPosition()
+                            seekBar.max = song?.let { (it.duration / 1000).toInt() } ?: 100
+                            seekBar.progress = position
+                            currentTime.text = formatTime(position.toLong())
+                            totalTime.text = song?.let { formatTime(it.duration) } ?: "00:00"
+                        }
+                        Thread.sleep(500)
+                    }
+                }.start()
+            } else {
+                Toast.makeText(this, "هیچ آهنگی پیدا نشد", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun toggleCamera() {
+        isCameraActive = !isCameraActive
+        if (isCameraActive) {
+            gestureController = GestureController(this, previewView, audioManager) { gesture ->
+                handleGesture(gesture)
+            }
+            gestureController?.start()
+            cameraToggleBtn.setImageResource(R.drawable.ic_camera_active)
+            Toast.makeText(this, "کنترل حرکتی فعال شد", Toast.LENGTH_SHORT).show()
+        } else {
+            gestureController?.stop()
+            gestureController = null
+            cameraToggleBtn.setImageResource(R.drawable.ic_camera)
+            Toast.makeText(this, "کنترل حرکتی غیرفعال شد", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun handleGesture(gesture: GestureType) {
+        when (gesture) {
+            GestureType.NEXT -> {
+                musicPlayer?.playNext()
+                Toast.makeText(this, "آهنگ بعدی", Toast.LENGTH_SHORT).show()
+            }
+            GestureType.PREVIOUS -> {
+                musicPlayer?.playPrevious()
+                Toast.makeText(this, "آهنگ قبلی", Toast.LENGTH_SHORT).show()
+            }
+            GestureType.VOLUME_UP -> adjustVolume(true)
+            GestureType.VOLUME_DOWN -> adjustVolume(false)
+            else -> {}
+        }
+    }
+
+    private fun adjustVolume(increase: Boolean) {
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val newVol = if (increase) {
+            (currentVol + 1).coerceAtMost(maxVol)
+        } else {
+            (currentVol - 1).coerceAtLeast(0)
+        }
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+    }
+
+    private fun updateUI(song: Song?) {
+        song?.let {
+            songTitle.text = it.title
+            artistName.text = it.artist
+            totalTime.text = formatTime(it.duration)
+            it.albumArtUri?.let { artUri ->
+                try {
+                    Glide.with(this)
+                        .load(artUri)
+                        .placeholder(R.drawable.ic_music)
+                        .error(R.drawable.ic_music)
+                        .into(albumArt)
+                } catch (e: Exception) {
+                    albumArt.setImageResource(R.drawable.ic_music)
+                }
+            }
+        }
+    }
+
+    private fun updatePlayPauseIcon() {
+        if (musicPlayer?.isPlaying() == true) {
+            playPauseBtn.setImageResource(R.drawable.ic_pause)
+        } else {
+            playPauseBtn.setImageResource(R.drawable.ic_play)
+        }
+    }
+
+    private fun showBackgroundChooser() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("تغییر پس‌زمینه")
+            .setItems(arrayOf("پس‌زمینه تیره", "پس‌زمینه مشکی", "انتخاب از گالری")) { _, which ->
+                when (which) {
+                    0 -> mainLayout.setBackgroundColor(backgroundColors[0])
+                    1 -> mainLayout.setBackgroundColor(backgroundColors[2])
+                    2 -> backgroundPicker.launch("image/*")
+                }
+            }
+            .show()
+    }
+
+    private fun formatTime(millis: Long): String {
+        return String.format("%02d:%02d",
+            TimeUnit.MILLISECONDS.toMinutes(millis),
+            TimeUnit.MILLISECONDS.toSeconds(millis) -
+                TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(millis))
+        )
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        gestureController?.stop()
+        musicPlayer?.release()
+    }
+}
+
+============================================================
+9 - MusicPlayer.kt | app/src/main/java/com/example/gestureplayer
+============================================================
+package com.example.gestureplayer
+
+import android.content.Context
+import android.media.MediaPlayer
+import android.net.Uri
+import android.provider.MediaStore
+
+data class Song(
+    val id: Long,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val duration: Long,
+    val uri: Uri,
+    val albumArtUri: Uri?
+)
+
+class MusicPlayer(private val context: Context) {
+    private var mediaPlayer: MediaPlayer? = null
+    private var songList: MutableList<Song> = mutableListOf()
+    private var currentIndex = 0
+
+    init {
+        loadSongsFromDevice()
+    }
+
+    private fun loadSongsFromDevice() {
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.ALBUM_ID
+        )
+
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
+
+        try {
+            context.contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+                val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idColumn)
+                    val albumId = cursor.getLong(albumIdColumn)
+                    val contentUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                    val uri = Uri.withAppendedPath(contentUri, id.toString())
+                    val albumArtUri = Uri.parse("content://media/external/audio/albumart/$albumId")
+
+                    songList.add(
+                        Song(
+                            id = id,
+                            title = cursor.getString(titleColumn) ?: "نامشخص",
+                            artist = cursor.getString(artistColumn) ?: "نامشخص",
+                            album = cursor.getString(albumColumn) ?: "نامشخص",
+                            duration = cursor.getLong(durationColumn),
+                            uri = uri,
+                            albumArtUri = albumArtUri
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun playIndex(index: Int) {
+        if (songList.isEmpty() || index !in songList.indices) return
+        currentIndex = index
+        playCurrentSong()
+    }
+
+    fun playNext() {
+        if (songList.isEmpty()) return
+        currentIndex = (currentIndex + 1) % songList.size
+        playCurrentSong()
+    }
+
+    fun playPrevious() {
+        if (songList.isEmpty()) return
+        currentIndex = if (currentIndex > 0) currentIndex - 1 else songList.size - 1
+        playCurrentSong()
+    }
+
+    private fun playCurrentSong() {
+        val song = songList[currentIndex]
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(context, song.uri)
+            mediaPlayer?.setOnCompletionListener { playNext() }
+            mediaPlayer?.start()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun togglePlayPause() {
+        mediaPlayer?.let {
+            if (it.isPlaying) it.pause() else it.start()
+        }
+    }
+
+    fun seekTo(seconds: Long) {
+        mediaPlayer?.seekTo((seconds * 1000).toInt())
+    }
+
+    fun getCurrentSong(): Song? = if (songList.isEmpty()) null else songList[currentIndex]
+    fun getAllSongs(): List<Song> = songList
+    fun isPlaying(): Boolean = mediaPlayer?.isPlaying ?: false
+    fun getCurrentPosition(): Int = mediaPlayer?.currentPosition ?: 0
+    fun pause() { mediaPlayer?.pause() }
+
+    fun release() {
+        mediaPlayer?.release()
+        mediaPlayer = null
+    }
+}
+
+============================================================
+10 - GestureController.kt | app/src/main/java/com/example/gestureplayer
+============================================================
+package com.example.gestureplayer
+
+import android.content.Context
+import android.media.AudioManager
+import android.util.Log
+import androidx.camera.core.*
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import com.google.mediapipe.framework.image.MPImageBuilder
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
+import java.util.concurrent.Executors
+
+enum class GestureType {
+    NEXT, PREVIOUS, VOLUME_UP, VOLUME_DOWN, NONE
+}
+
+class GestureController(
+    private val context: Context,
+    private val previewView: PreviewView,
+    private val audioManager: AudioManager,
+    private val onGesture: (GestureType) -> Unit
+) {
+    private var handLandmarker: HandLandmarker? = null
+    private val executor = Executors.newSingleThreadExecutor()
+
+    private var lastMovementDirection = 0
+    private var lastSwipeTime = 0L
+    private val indexFingerPoints = ArrayDeque<Pair<Float, Float>>()
+
+    fun start() {
+        setupHandLandmarker()
+        startCamera()
+    }
+
+    private fun setupHandLandmarker() {
+        try {
+            val modelBuffer = loadModelFile(context)
+            val options = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(
+                    BaseOptions.builder()
+                        .setModelAssetBuffer(modelBuffer)
+                        .build()
+                )
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setNumHands(1)
+                .setMinHandDetectionConfidence(0.7f)
+                .setMinHandPresenceConfidence(0.7f)
+                .setResultListener { result: HandLandmarkerResult, _: Long ->
+                    processLandmarks(result)
+                }
+                .build()
+
+            handLandmarker = HandLandmarker.createFromOptions(context, options)
+        } catch (e: Exception) {
+            Log.e("GestureController", "Error: ${e.message}")
+        }
+    }
+
+    private fun loadModelFile(context: Context): java.nio.ByteBuffer {
+        val inputStream = context.assets.open("hand_landmarker.task")
+        val bytes = inputStream.readBytes()
+        return java.nio.ByteBuffer.wrap(bytes)
+    }
+
+    private fun startCamera() {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            try {
+                val cameraProvider = cameraProviderFuture.get()
+                val preview = Preview.Builder().build()
+                preview.setSurfaceProvider(previewView.surfaceProvider)
+
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .build()
+
+                imageAnalysis.setAnalyzer(executor) { imageProxy ->
+                    val mpImage = MPImageBuilder.fromMediaImage(
+                        imageProxy.image!!,
+                        imageProxy.imageInfo.rotationDegrees
+                    ).build()
+                    handLandmarker?.detectAsync(mpImage, System.currentTimeMillis())
+                    imageProxy.close()
+                }
+
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    context as androidx.lifecycle.LifecycleOwner,
+                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                    preview,
+                    imageAnalysis
+                )
+            } catch (e: Exception) {
+                Log.e("GestureController", "Error: ${e.message}")
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    private fun processLandmarks(result: HandLandmarkerResult) {
+        if (result.landmarks().isNotEmpty()) {
+            val landmarks = result.landmarks()[0]
+            if (landmarks.size >= 21) {
+                val wrist = landmarks[0]
+                val indexTip = landmarks[8]
+
+                detectHorizontalSwipe(wrist.x(), wrist.y())
+                detectCircularMotion(indexTip.x(), indexTip.y())
+            }
+        }
+    }
+
+    private fun detectHorizontalSwipe(wristX: Float, wristY: Float) {
+        val customWristX = (wristX - 0.5f) * 2
+
+        if (customWristX > 0.4f) {
+            val currentTime = System.currentTimeMillis()
+            if (lastMovementDirection != 1 && currentTime - lastSwipeTime > 1000) {
+                onGesture(GestureType.NEXT)
+                lastMovementDirection = 1
+                lastSwipeTime = currentTime
+            }
+        } else if (customWristX < -0.4f) {
+            val currentTime = System.currentTimeMillis()
+            if (lastMovementDirection != -1 && currentTime - lastSwipeTime > 1000) {
+                onGesture(GestureType.PREVIOUS)
+                lastMovementDirection = -1
+                lastSwipeTime = currentTime
+            }
+        } else {
+            lastMovementDirection = 0
+        }
+    }
+
+    private fun detectCircularMotion(indexX: Float, indexY: Float) {
+        indexFingerPoints.addLast(Pair(indexX, indexY))
+        if (indexFingerPoints.size > 60) {
+            indexFingerPoints.removeFirst()
+        }
+        if (indexFingerPoints.size < 30) return
+
+        val cx = indexFingerPoints.sumOf { it.first.toDouble() } / indexFingerPoints.size
+        val cy = indexFingerPoints.sumOf { it.second.toDouble() } / indexFingerPoints.size
+
+        val angles = indexFingerPoints.map { (x, y) ->
+            Math.toDegrees(Math.atan2((y - cy), (x - cx))).toFloat()
+        }
+
+        var totalRotation = 0f
+        for (i in 1 until angles.size) {
+            var diff = angles[i] - angles[i - 1]
+            if (diff > 180) diff -= 360
+            if (diff < -180) diff += 360
+            totalRotation += diff
+        }
+
+        if (Math.abs(totalRotation) > 300) {
+            if (totalRotation > 0) {
+                onGesture(GestureType.VOLUME_UP)
+            } else {
+                onGesture(GestureType.VOLUME_DOWN)
+            }
+            indexFingerPoints.clear()
+        }
+    }
+
+    fun stop() {
+        try {
+            handLandmarker?.close()
+        } catch (_: Exception) {}
+        executor.shutdown()
+    }
+}
+
+============================================================
+11 - LibraryActivity.kt | app/src/main/java/com/example/gestureplayer
+============================================================
+package com.example.gestureplayer
+
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
+
+class LibraryActivity : AppCompatActivity() {
+
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var songList: List<Song>
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_library)
+
+        recyclerView = findViewById(R.id.songRecyclerView)
+        recyclerView.layoutManager = LinearLayoutManager(this)
+
+        songList = MusicPlayer(this).getAllSongs()
+        recyclerView.adapter = SongAdapter(songList)
+    }
+}
+
+class SongAdapter(private val songs: List<Song>) :
+    RecyclerView.Adapter<SongAdapter.SongViewHolder>() {
+
+    class SongViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val albumArt: ImageView = view.findViewById(R.id.itemAlbumArt)
+        val title: TextView = view.findViewById(R.id.itemTitle)
+        val artist: TextView = view.findViewById(R.id.itemArtist)
+        val duration: TextView = view.findViewById(R.id.itemDuration)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SongViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_song, parent, false)
+        return SongViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: SongViewHolder, position: Int) {
+        val song = songs[position]
+        holder.title.text = song.title
+        holder.artist.text = song.artist
+        holder.duration.text = String.format("%02d:%02d",
+            song.duration / 60000,
+            (song.duration % 60000) / 1000
+        )
+
+        song.albumArtUri?.let { artUri ->
+            try {
+                Glide.with(holder.itemView.context)
+                    .load(artUri)
+                    .placeholder(R.drawable.ic_music)
+                    .error(R.drawable.ic_music)
+                    .into(holder.albumArt)
+            } catch (e: Exception) {
+                holder.albumArt.setImageResource(R.drawable.ic_music)
+            }
+        }
+    }
+
+    override fun getItemCount(): Int = songs.size
+}
+
+============================================================
+12 - activity_main.xml | app/src/main/res/layout
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:id="@+id/mainLayout">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_alignParentTop="true"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/cameraToggleBtn"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_margin="12dp"
+        android:layout_marginTop="300dp"
+        android:layout_alignParentEnd="true"
+        android:background="@drawable/rounded_button"
+        android:contentDescription="camera"
+        android:padding="8dp"
+        android:src="@drawable/ic_camera"
+        android:visibility="gone" />
+
+    <ImageView
+        android:id="@+id/albumArt"
+        android:layout_width="280dp"
+        android:layout_height="280dp"
+        android:layout_centerInParent="true"
+        android:layout_marginTop="40dp"
+        android:background="@drawable/rounded_background"
+        android:contentDescription="album art"
+        android:padding="24dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_music" />
+
+    <TextView
+        android:id="@+id/songTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/albumArt"
+        android:layout_marginTop="24dp"
+        android:layout_marginHorizontal="24dp"
+        android:ellipsize="marquee"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:singleLine="true"
+        android:gravity="center"
+        android:text="Song Title"
+        android:textColor="@color/white"
+        android:textSize="22sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/artistName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/songTitle"
+        android:layout_marginTop="8dp"
+        android:layout_marginHorizontal="24dp"
+        android:gravity="center"
+        android:text="Artist"
+        android:textColor="@color/gray"
+        android:textSize="16sp" />
+
+    <RelativeLayout
+        android:id="@+id/seekLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/artistName"
+        android:layout_marginTop="24dp"
+        android:layout_marginHorizontal="24dp">
+
+        <TextView
+            android:id="@+id/currentTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentStart="true"
+            android:text="00:00"
+            android:textColor="@color/gray"
+            android:textSize="12sp" />
+
+        <SeekBar
+            android:id="@+id/seekBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_toEndOf="@id/currentTime"
+            android:layout_toStartOf="@id/totalTime"
+            android:layout_marginEnd="8dp"
+            android:max="100"
+            android:progressTint="@color/primary"
+            android:thumbTint="@color/primary" />
+
+        <TextView
+            android:id="@+id/totalTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:text="00:00"
+            android:textColor="@color/gray"
+            android:textSize="12sp" />
+    </RelativeLayout>
+
+    <LinearLayout
+        android:id="@+id/controlsLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/seekLayout"
+        android:layout_marginTop="24dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingHorizontal="48dp">
+
+        <ImageButton
+            android:id="@+id/previousBtn"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/rounded_button"
+            android:contentDescription="previous"
+            android:padding="12dp"
+            android:src="@drawable/ic_previous" />
+
+        <ImageButton
+            android:id="@+id/playPauseBtn"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_marginHorizontal="32dp"
+            android:background="@drawable/rounded_play_button"
+            android:contentDescription="play"
+            android:padding="18dp"
+            android:src="@drawable/ic_play" />
+
+        <ImageButton
+            android:id="@+id/nextBtn"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/rounded_button"
+            android:contentDescription="next"
+            android:padding="12dp"
+            android:src="@drawable/ic_next" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/gestureHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/controlsLayout"
+        android:layout_marginTop="24dp"
+        android:gravity="center"
+        android:lineSpacingExtra="4dp"
+        android:text="Right = Next\nLeft = Previous\nClockwise = Volume Up\nCounter = Volume Down"
+        android:textColor="@color/gray"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_alignParentBottom="true"
+        android:background="@color/secondary"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="24dp">
+
+        <ImageButton
+            android:id="@+id/libraryBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="library"
+            android:src="@drawable/ic_library" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/backgroundBtn"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="background"
+            android:src="@drawable/ic_palette" />
+    </LinearLayout>
+</RelativeLayout>
+
+============================================================
+13 - activity_library.xml | app/src/main/res/layout
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@color/secondary"
+        android:gravity="center"
+        android:padding="16dp"
+        android:text="Music Library"
+        android:textColor="@color/white"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/songRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="8dp"
+        android:scrollbars="vertical" />
+</LinearLayout>
+
+============================================================
+14 - item_song.xml | app/src/main/res/layout
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="72dp"
+    android:background="@android:color/transparent"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/itemAlbumArt"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/rounded_background"
+        android:contentDescription="album"
+        android:padding="4dp"
+        android:scaleType="centerCrop"
+        android:src="@drawable/ic_music" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/itemTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Title"
+            android:textColor="@color/white"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/itemArtist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Artist"
+            android:textColor="@color/gray"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/itemDuration"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="8dp"
+        android:text="00:00"
+        android:textColor="@color/gray"
+        android:textSize="12sp" />
+</LinearLayout>
+
+============================================================
+15 - colors.xml | app/src/main/res/values
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1DB954</color>
+    <color name="primary_dark">#1AA64A</color>
+    <color name="secondary">#121212</color>
+    <color name="secondary_dark">#0D0D0D</color>
+    <color name="background">#121212</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="gray">#B3B3B3</color>
+</resources>
+
+============================================================
+16 - strings.xml | app/src/main/res/values
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GesturePlayer</string>
+</resources>
+
+============================================================
+17 - themes.xml | app/src/main/res/values
+============================================================
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GesturePlayer" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryVariant">@color/primary_dark</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorOnSecondary">@color/black</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>
+
+============================================================
+18 - ic_play.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M8,5v14l11,-7z"/>
+</vector>
+
+============================================================
+19 - ic_pause.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M6,19h4L10,5L6,5v14zM14,5v14h4L18,5h-4z"/>
+</vector>
+
+============================================================
+20 - ic_next.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M6,18l8.5,-6L6,6v12zM16,6v12h2L18,6h-2z"/>
+</vector>
+
+============================================================
+21 - ic_previous.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M6,6h2v12L6,18zM9.5,12l8.5,6L18,6z"/>
+</vector>
+
+============================================================
+22 - ic_music.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z"/>
+</vector>
+
+============================================================
+23 - ic_camera.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M12,12m-3.2,0a3.2,3.2 0,1 1,6.4 0a3.2,3.2 0,1 1,-6.4 0"/>
+    <path android:fillColor="#000000"
+        android:pathData="M9,2L7.17,4H4c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V6c0,-1.1 -0.9,-2 -2,-2h-3.17L15,2H9zm3,15c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5z"/>
+</vector>
+
+============================================================
+24 - ic_camera_active.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#1DB954">
+    <path android:fillColor="#000000"
+        android:pathData="M12,12m-3.2,0a3.2,3.2 0,1 1,6.4 0a3.2,3.2 0,1 1,-6.4 0"/>
+    <path android:fillColor="#000000"
+        android:pathData="M9,2L7.17,4H4c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V6c0,-1.1 -0.9,-2 -2,-2h-3.17L15,2H9zm3,15c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5z"/>
+</vector>
+
+============================================================
+25 - ic_library.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M4,6H2v14c0,1.1 0.9,2 2,2h14v-2H4V6zm16,-4H8C6.9,2 6,2.9 6,4v12c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V4c0,-1.1 -0.9,-2 -2,-2zm-1,9h-4v4h-2v-4H9V9h4V5h2v4h4v2z"/>
+</vector>
+
+============================================================
+26 - ic_palette.xml | app/src/main/res/drawable
+============================================================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#000000"
+        android:pathData="M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9c0.83,0 1.5,-0.67 1.5,-1.5 0,-0.39 -0.15,-0.74 -0.39,-1.01 -0.23,-0.26 -0.38,-0.61 -0.38,-0.99 0,-0.83 0.67,-1.5 1.5,-1.5L16,16c2.76,0 5,-2.24 5,-5 0,-4.42 -4.03,-8 -9,-8zM6.5,12c-0.83,0 -1.5,-0.67 -1.5,-1.5S5.67,9 6.5,9 8,9.67 8,10.5 7.33,12 6.5,12zM9.5,8C8.67,8 8,7.33 8,6.5S8.67,5 9.5,5s1.5,0.67 1.5,1.5S10.33,8 9.5,8zM14.5,8c-0.83,0 -1.5,-0.67 -1.5,-1.5S13.67,5 14.5,5s1.5,0.67 1.5,1.5S15.33,8 14.5,8zM17.5,12c-0.83,0 -1.5,-0.67 -1.5,-1.5S16.67,9 17.5,9s1.5,0.67 1.5,1.5 -0.67,1.5 -1.5,1.5z"/>
+</vector>
+
+============================================================
+27 - rounded_button.xml | app/src/main/res/drawable
+============================================================
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2A2A2A"/>
+    <corners android:radius="30dp"/>
+</shape>
+
+============================================================
+28 - rounded_play_button.xml | app/src/main/res/drawable
+============================================================
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1DB954"/>
+    <corners android:radius="36dp"/>
+</shape>
+
+============================================================
+29 - rounded_background.xml | app/src/main/res/drawable
+============================================================
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2A2A2A"/>
+    <corners android:radius="16dp"/>
+</shape>
+
+============================================================
+END OF FILE
+============================================================
